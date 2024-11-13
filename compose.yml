@@ -1,0 +1,37 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mqtt
+    environment:
+      - MQTT_BROKER_URL=mqtt://mqtt:1883
+      - TZ=Europe/Warsaw
+    networks:
+      - app-network
+
+  mqtt:
+    image: eclipse-mosquitto
+    container_name: mqtt5
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./config:/mosquitto/config:rw
+      - ./data:/mosquitto/data:rw
+      - ./log:/mosquitto/log:rw
+    restart: unless-stopped
+    networks:
+      - app-network
+
+volumes:
+  config:
+  data:
+  log:
+
+networks:
+  app-network:
+    driver: bridge

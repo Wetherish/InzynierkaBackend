@@ -1,0 +1,10 @@
+{
+"ID": 1,
+"Topic": "Led",
+"Message": "1",
+"AdditionalCommand": true,
+"Time": "14:30",
+"Longitude": 17.0385,
+"Latitude": 51.1079,
+"Command": "sunSet"
+}
