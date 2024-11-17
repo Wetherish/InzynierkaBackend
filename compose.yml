@@ -12,6 +12,9 @@ services:
       - TZ=Europe/Warsaw
     networks:
       - app-network
+    volumes:
+      - ./config.json:/app/config.json:rw
+      - ./temperature.json:/app/temperature.json:rw
 
   mqtt:
     image: eclipse-mosquitto

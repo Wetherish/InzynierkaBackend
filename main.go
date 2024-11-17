@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/eclipse/paho.mqtt.golang"
@@ -16,6 +17,7 @@ import (
 
 const (
 	configFile = "config.json"
+	dataFile   = "temperature.json"
 	mqttBroker = "mqtt:1883"
 )
 
@@ -34,9 +36,16 @@ type Configurations struct {
 	Configs []Config `json:"configs"`
 }
 
+type DataEntry struct {
+	Temperature float64 `json:"temperature,omitempty"`
+	Humidity    float64 `json:"humidity,omitempty"`
+}
+
 var (
 	mqttClient mqtt.Client
+	data       []DataEntry
 	configs    Configurations
+	dataMutex  sync.Mutex
 )
 
 func loadConfigs() error {
@@ -147,9 +156,99 @@ func updateConfig(c echo.Context) error {
 	return c.JSON(http.StatusNotFound, map[string]string{"message": "Configuration not found"})
 }
 
+func initDataFile() {
+	if _, err := os.Stat(dataFile); os.IsNotExist(err) {
+		file, err := os.Create(dataFile)
+		if err != nil {
+			log.Fatalf("Failed to create data file: %v", err)
+		}
+		defer file.Close()
+	} else {
+		loadDataFromFile()
+	}
+}
+
+func loadDataFromFile() {
+	dataMutex.Lock()
+	defer dataMutex.Unlock()
+
+	file, err := os.ReadFile(dataFile)
+	if err != nil {
+		log.Printf("Failed to read data file: %v", err)
+		return
+	}
+	json.Unmarshal(file, &data)
+}
+
+func saveDataToFile() {
+	dataMutex.Lock()
+	defer dataMutex.Unlock()
+
+	fileData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		log.Printf("Failed to marshal data to JSON: %v", err)
+		return
+	}
+	err = os.WriteFile(dataFile, fileData, 0644)
+	if err != nil {
+		log.Printf("Failed to write data to file: %v", err)
+	}
+}
+
+func mqttMessageHandler(client mqtt.Client, msg mqtt.Message) {
+	var newEntry DataEntry
+
+	switch msg.Topic() {
+	case "Temperature":
+		var temp float64
+		if err := json.Unmarshal(msg.Payload(), &temp); err == nil {
+			newEntry.Temperature = temp
+		} else {
+			log.Printf("Failed to unmarshal temperature data: %v", err)
+			return
+		}
+	case "Humidity":
+		var humidity float64
+		if err := json.Unmarshal(msg.Payload(), &humidity); err == nil {
+			newEntry.Humidity = humidity
+		} else {
+			log.Printf("Failed to unmarshal humidity data: %v", err)
+			return
+		}
+	}
+	dataMutex.Lock()
+	if len(data) >= 10 {
+		data = data[1:]
+	}
+	data = append(data, newEntry)
+	dataMutex.Unlock()
+
+	saveDataToFile()
+}
+
+func subscribeToTopics() {
+	if token := mqttClient.Subscribe("Temperature", 0, mqttMessageHandler); token.Wait() && token.Error() != nil {
+		log.Fatalf("Failed to subscribe to Temperature topic: %v", token.Error())
+	}
+	if token := mqttClient.Subscribe("Humidity", 0, mqttMessageHandler); token.Wait() && token.Error() != nil {
+		log.Fatalf("Failed to subscribe to humidity topic: %v", token.Error())
+	}
+	log.Println("Subscribed to Temperature and humidity topics")
+}
+
+func getLatestDataHandler(c echo.Context) error {
+	dataMutex.Lock()
+	defer dataMutex.Unlock()
+
+	if len(data) < 10 {
+		return c.JSON(http.StatusOK, data)
+	}
+	return c.JSON(http.StatusOK, data[len(data)-10:])
+}
+
 func initMQTT() mqtt.Client {
 	opts := mqtt.NewClientOptions()
-	opts.SetUsername("mobile")
+	opts.SetUsername("server")
 	opts.SetPassword("lokomotywa")
 	opts.AddBroker(mqttBroker)
 	opts.SetClientID("go_mqtt_client")
@@ -181,12 +280,14 @@ func scheduleMessages() {
 }
 
 func main() {
+	initDataFile()
+
 	if err := loadConfigs(); err != nil {
 		log.Fatalf("Failed to load configurations: %v", err)
 	}
 	fmt.Println("Check")
 	mqttClient = initMQTT()
-
+	subscribeToTopics()
 	go scheduleMessages()
 
 	e := echo.New()
@@ -200,6 +301,7 @@ func main() {
 	e.POST("/config", updateConfigHandler)
 	e.DELETE("/config", clearConfigHandler)
 	e.PUT("/config/:id", updateConfig)
+	e.GET("/latest-data", getLatestDataHandler)
 
 	e.Logger.Fatal(e.Start(":8080"))
 }

@@ -1,3 +1,14 @@
 {
-  "configs": []
+  "configs": [
+    {
+      "ID": 1,
+      "Topic": "Led",
+      "Message": "1",
+      "AdditionalCommand": true,
+      "Time": "16:03",
+      "Longitude": 17.0385,
+      "Latitude": 51.1079,
+      "Command": "sunSet"
+    }
+  ]
 }
